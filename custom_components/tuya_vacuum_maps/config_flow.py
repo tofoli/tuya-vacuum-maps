@@ -25,21 +25,22 @@ from .const import CONF_SERVER, CONF_SERVER_WEST_AMERICA, CONF_SERVERS, DOMAIN
 _LOGGER = logging.getLogger(__name__)
 
 
-async def validate_input(data: dict) -> None:
-    """Validate that the user input allows us to connect."""
-
+def _validate_input_sync(data: dict[str, Any]) -> None:
+    """Validate credentials and map access using blocking library calls."""
     vacuum = tuya_vacuum.TuyaVacuum(
         data["server"], data["client_id"], data["client_secret"], data["device_id"]
     )
-
     vacuum.fetch_realtime_map()
+
+
+async def validate_input(hass, data: dict[str, Any]) -> None:
+    """Validate that the user input allows us to connect."""
+    await hass.async_add_executor_job(_validate_input_sync, data)
 
 
 class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Tuya Vacuum Maps."""
 
-    # Schema version of the entries it creates
-    # Home Assistant will call the migrate method if the version changes
     VERSION = 1
     MINOR_VERSION = 1
 
@@ -47,26 +48,16 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.ConfigFlowResult:
-        """This is Invoked when a user initiates a flow via the user interface.
-
-        Also called when discovered but a matching discovery step is not defined.
-        """
-
-        # List of errors related to the form
+        """Handle the user step."""
         errors = {}
 
         if user_input is not None:
             try:
-                try:
-                    await validate_input(user_input)
+                await validate_input(self.hass, user_input)
 
-                    # Process the information
-                    return self.async_create_entry(
-                        title=user_input.pop(CONF_NAME), data=user_input
-                    )
-                except Exception as err:
-                    _LOGGER.error("Error occurred while validating: %s", err)
-                    raise err
+                return self.async_create_entry(
+                    title=user_input.pop(CONF_NAME), data=user_input
+                )
             except CrossRegionAccessError:
                 errors[CONF_SERVER] = (
                     "Cross region access is not allowed, data center mismatch."
@@ -77,22 +68,25 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 errors[CONF_CLIENT_SECRET] = "Invalid Client Secret."
             except InvalidDeviceIDError:
                 errors[CONF_DEVICE_ID] = "Invalid Device ID."
-            except Exception:  # pylint: disable=broad-except
-                errors["base"] = "Unknown error occurred."
-        # Define the schema of the form
+            except Exception as err:  # pylint: disable=broad-except
+                _LOGGER.error("Error occurred while validating: %s", err)
+                err_text = str(err)
+                if "Map layout version" in err_text and "is not supported" in err_text:
+                    errors["base"] = (
+                        "Map layout not supported by installed tuya-vacuum version. "
+                        "Update integration dependencies."
+                    )
+                else:
+                    errors["base"] = err_text or "Unknown error occurred."
+
         data_schema = vol.Schema(
             {
-                # Device Name
                 vol.Required(CONF_NAME, default="Vacuum Map"): str,
-                # Server API URL
                 vol.Required(CONF_SERVER, default=CONF_SERVER_WEST_AMERICA): vol.In(
                     CONF_SERVERS
                 ),
-                # Client ID
                 vol.Required(CONF_CLIENT_ID, default=""): str,
-                # Client Secret
                 vol.Required(CONF_CLIENT_SECRET, default=""): str,
-                # Device ID
                 vol.Required(CONF_DEVICE_ID, default=""): str,
             }
         )
