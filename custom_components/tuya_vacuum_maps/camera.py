@@ -20,7 +20,7 @@ def _fetch_map_image(
     origin: str, client_id: str, client_secret: str, device_id: str
 ) -> bytes:
     """Fetch and render map image using blocking library calls."""
-    vacuum = tuya_vacuum.TuyaVacuum(origin, client_id, client_secret, device_id)
+    vacuum = tuya_vacuum.Vacuum(origin, client_id, client_secret, device_id)
     vacuum_map = vacuum.fetch_realtime_map()
     image = vacuum_map.to_image()
 
