@@ -27,7 +27,7 @@ _LOGGER = logging.getLogger(__name__)
 
 def _validate_input_sync(data: dict[str, Any]) -> None:
     """Validate credentials and map access using blocking library calls."""
-    vacuum = tuya_vacuum.Vacuum(
+    vacuum = tuya_vacuum.TuyaVacuum(
         data["server"], data["client_id"], data["client_secret"], data["device_id"]
     )
     vacuum.fetch_realtime_map()
