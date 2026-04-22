@@ -3,6 +3,7 @@
 import io
 import logging
 from datetime import timedelta
+from typing import Any
 
 import tuya_vacuum
 from homeassistant.components.camera import Camera, ENTITY_ID_FORMAT
@@ -16,17 +17,78 @@ SCAN_INTERVAL = timedelta(seconds=10)
 _LOGGER = logging.getLogger(__name__)
 
 
+def _create_vacuum(
+    origin: str, client_id: str, client_secret: str, device_id: str
+) -> Any:
+    """Create a vacuum object for supported tuya_vacuum versions."""
+    vacuum_cls = getattr(tuya_vacuum, "TuyaVacuum", None)
+    if vacuum_cls is None:
+        vacuum_cls = getattr(tuya_vacuum, "Vacuum", None)
+    if vacuum_cls is None:
+        raise AttributeError("tuya_vacuum has no TuyaVacuum or Vacuum class")
+
+    return vacuum_cls(origin, client_id, client_secret, device_id)
+
+
+def _fetch_realtime_map(vacuum: Any) -> Any:
+    """Fetch realtime map across library API variants."""
+    for method_name in (
+        "fetch_realtime_map",
+        "get_realtime_map",
+        "get_realtime_maps",
+        "fetch_map",
+        "get_map",
+        "realtime_map",
+    ):
+        method = getattr(vacuum, method_name, None)
+        if callable(method):
+            result = method()
+            if isinstance(result, list):
+                if not result:
+                    raise ValueError("Map request returned an empty list")
+                return result[0]
+            return result
+
+    available = [n for n in dir(vacuum) if "map" in n.lower() or "fetch" in n.lower()]
+    raise AttributeError(
+        f"{type(vacuum).__name__} has no supported map method. Available: {available}"
+    )
+
+
+def _to_png_bytes(vacuum_map: Any) -> bytes:
+    """Convert map object returned by library into PNG bytes."""
+    if isinstance(vacuum_map, (bytes, bytearray)):
+        return bytes(vacuum_map)
+
+    to_image = getattr(vacuum_map, "to_image", None)
+    if callable(to_image):
+        image = to_image()
+        img_byte_arr = io.BytesIO()
+        image.save(img_byte_arr, format="PNG")
+        return img_byte_arr.getvalue()
+
+    image_attr = getattr(vacuum_map, "image", None)
+    if image_attr is not None and hasattr(image_attr, "save"):
+        img_byte_arr = io.BytesIO()
+        image_attr.save(img_byte_arr, format="PNG")
+        return img_byte_arr.getvalue()
+
+    if isinstance(vacuum_map, dict):
+        raise TypeError(
+            "Map returned as dict, unsupported by current integration. "
+            f"Keys: {list(vacuum_map.keys())}"
+        )
+
+    raise TypeError(f"Unsupported map object type: {type(vacuum_map).__name__}")
+
+
 def _fetch_map_image(
     origin: str, client_id: str, client_secret: str, device_id: str
 ) -> bytes:
     """Fetch and render map image using blocking library calls."""
-    vacuum = tuya_vacuum.TuyaVacuum(origin, client_id, client_secret, device_id)
-    vacuum_map = vacuum.fetch_realtime_map()
-    image = vacuum_map.to_image()
-
-    img_byte_arr = io.BytesIO()
-    image.save(img_byte_arr, format="PNG")
-    return img_byte_arr.getvalue()
+    vacuum = _create_vacuum(origin, client_id, client_secret, device_id)
+    vacuum_map = _fetch_realtime_map(vacuum)
+    return _to_png_bytes(vacuum_map)
 
 
 async def async_setup_entry(

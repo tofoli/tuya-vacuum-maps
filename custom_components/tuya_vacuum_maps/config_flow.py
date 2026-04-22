@@ -25,12 +25,48 @@ from .const import CONF_SERVER, CONF_SERVER_WEST_AMERICA, CONF_SERVERS, DOMAIN
 _LOGGER = logging.getLogger(__name__)
 
 
-def _validate_input_sync(data: dict[str, Any]) -> None:
-    """Validate credentials and map access using blocking library calls."""
-    vacuum = tuya_vacuum.TuyaVacuum(
+def _create_vacuum(data: dict[str, Any]) -> Any:
+    """Create a vacuum object for supported tuya_vacuum versions."""
+    vacuum_cls = getattr(tuya_vacuum, "TuyaVacuum", None)
+    if vacuum_cls is None:
+        vacuum_cls = getattr(tuya_vacuum, "Vacuum", None)
+    if vacuum_cls is None:
+        raise AttributeError("tuya_vacuum has no TuyaVacuum or Vacuum class")
+
+    return vacuum_cls(
         data["server"], data["client_id"], data["client_secret"], data["device_id"]
     )
-    vacuum.fetch_realtime_map()
+
+
+def _fetch_realtime_map(vacuum: Any) -> Any:
+    """Fetch realtime map across library API variants."""
+    for method_name in (
+        "fetch_realtime_map",
+        "get_realtime_map",
+        "get_realtime_maps",
+        "fetch_map",
+        "get_map",
+        "realtime_map",
+    ):
+        method = getattr(vacuum, method_name, None)
+        if callable(method):
+            result = method()
+            if isinstance(result, list):
+                if not result:
+                    raise ValueError("Map request returned an empty list")
+                return result[0]
+            return result
+
+    available = [n for n in dir(vacuum) if "map" in n.lower() or "fetch" in n.lower()]
+    raise AttributeError(
+        f"{type(vacuum).__name__} has no supported map method. Available: {available}"
+    )
+
+
+def _validate_input_sync(data: dict[str, Any]) -> None:
+    """Validate credentials and map access using blocking library calls."""
+    vacuum = _create_vacuum(data)
+    _fetch_realtime_map(vacuum)
 
 
 async def validate_input(hass, data: dict[str, Any]) -> None:
