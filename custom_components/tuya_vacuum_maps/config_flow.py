@@ -25,6 +25,17 @@ from .const import CONF_SERVER, CONF_SERVER_WEST_AMERICA, CONF_SERVERS, DOMAIN
 _LOGGER = logging.getLogger(__name__)
 
 
+def _is_known_parser_error(err: Exception) -> bool:
+    """Return True when the error indicates unsupported Tuya map format."""
+    err_text = str(err).lower()
+    return (
+        "map layout version" in err_text
+        or "unknown map type" in err_text
+        or "bytearray index out of range" in err_text
+        or "'layout' object has no attribute 'rooms'" in err_text
+    )
+
+
 def _create_vacuum(data: dict[str, Any]) -> Any:
     """Create a vacuum object for supported tuya_vacuum versions."""
     vacuum_cls = getattr(tuya_vacuum, "TuyaVacuum", None)
@@ -66,7 +77,15 @@ def _fetch_realtime_map(vacuum: Any) -> Any:
 def _validate_input_sync(data: dict[str, Any]) -> None:
     """Validate credentials and map access using blocking library calls."""
     vacuum = _create_vacuum(data)
-    _fetch_realtime_map(vacuum)
+    try:
+        _fetch_realtime_map(vacuum)
+    except Exception as err:
+        if _is_known_parser_error(err):
+            _LOGGER.warning(
+                "Ignoring map parser error during validation and continuing: %s", err
+            )
+            return
+        raise
 
 
 async def validate_input(hass, data: dict[str, Any]) -> None:
